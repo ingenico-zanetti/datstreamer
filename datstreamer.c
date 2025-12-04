@@ -160,15 +160,26 @@ static void analyze_and_forward(parserContext_s *context, const uint32_t *buffer
 				int firstWriteLength = FIFO_SAMPLE_SIZE - startReadIndex; // up-to the end of the FIFO
 				int secondWriteLength = toSend - firstWriteLength;        // remaining sample(s) from the start of the FIFO
 				int written1 = write(output->fd, context->inputFifo + startReadIndex, firstWriteLength * sizeof(uint32_t));
-				int written2 = write(output->fd, context->inputFifo, secondWriteLength * sizeof(uint32_t));
-				// fprintf(stderr, "%s:written1=%i/%i, written2=%i/%i" "\n", __func__, written1 / sizeof(uint32_t), firstWriteLength, written2 / sizeof(uint32_t), secondWriteLength);
-
+				if(written1 < 0){
+					perror("fwrite()(written1)");
+					close(output->fd);
+					output->fd = -1;
+				}else{
+					int written2 = write(output->fd, context->inputFifo, secondWriteLength * sizeof(uint32_t));
+					if(written2 < 0){
+						perror("fwrite()(written2)");
+						close(output->fd);
+						output->fd = -1;
+					}
+				}
 			}else{
 				// One single write() from the FIFO is enough
 				int written = write(output->fd, context->inputFifo + startReadIndex, toSend * sizeof(uint32_t));
 				// fprintf(stderr, "%s:written=%i" "\n", __func__, written / sizeof(uint32_t));
 				if(written != toSend * sizeof(uint32_t)){
-					perror("fwrite()");
+					perror("fwrite()(written)");
+					close(output->fd);
+					output->fd = -1;
 				}
 			}
 		}
@@ -261,49 +272,33 @@ int main(int argc, const char *argv[]){
 				}
 			}
 			int max = -1;
-			fd_set fds;
-			FD_ZERO(&fds);
-			FD_SET(STDIN_FILENO, &fds); updateMax(&max, STDIN_FILENO);
+			fd_set fds_in;
+			FD_ZERO(&fds_in);
+			FD_SET(STDIN_FILENO, &fds_in); updateMax(&max, STDIN_FILENO);
 			for(int i = 0 ; i < MAX_LISTENING_SOCKETS ; i++){
 				int listeningSocket = listeningSockets[i];
 				if(-1 != listeningSocket && (0 <= contextFirstSlotAvailable(&context))){
-					FD_SET(listeningSocket, &fds); updateMax(&max, listeningSocket);
-				}
-			}
-			int i = MAX_OUTPUTS;
-			while(i--){
-				int fd = context.outputs[i].fd;
-				if(-1 != fd){
-					FD_SET(fd, &fds); updateMax(&max, fd);
+					FD_SET(listeningSocket, &fds_in); updateMax(&max, listeningSocket);
 				}
 			}
 			struct timeval timeout = {.tv_sec = 1, .tv_usec = 0};
-			int selected = select(max + 1, &fds, NULL, NULL, &timeout);
+			int selected = select(max + 1, &fds_in, NULL, NULL, &timeout);
 			if(selected > 0){
-				// Check forwarding socket for error (read ready should not happen)
-				i = MAX_OUTPUTS;
-				while(i--){
-					int fd = context.outputs[i].fd;
-					if((-1 != fd) && (STDOUT_FILENO != fd) && FD_ISSET(fd, &fds)){
-						close(fd);
-						context.outputs[i].fd = -1;
-						fprintf(stderr, "slot %d had an error, closing fd %d" "\n", i, fd);
-					}
-				}
 				// Check listening sockets for incoming connection
 				for(int i = 0 ; i < MAX_LISTENING_SOCKETS ; i++){
 					int listeningSocket = listeningSockets[i];
-					if(-1 != listeningSocket && FD_ISSET(listeningSocket, &fds)){
+					if(-1 != listeningSocket && FD_ISSET(listeningSocket, &fds_in)){
 						int index = contextFirstSlotAvailable(&context);
 						if(-1 != index){
 							context.outputs[index].fd = accept(listeningSocket, NULL, NULL);
 							context.outputs[index].offset = socketOffset[i];
 							context.outputs[index].remainingOffset = socketOffset[i];
+							context.outputs[index].waveHeaderSent = 0;
 							fprintf(stderr, "accepted connexion to slot %d (fd=%d), offset=%i sample(s)" "\n", index, context.outputs[index].fd, context.outputs[index].offset);
 						}
 					}
 				}
-				if(FD_ISSET(STDIN_FILENO, &fds)){
+				if(FD_ISSET(STDIN_FILENO, &fds_in)){
 					int32_t buffer[SAMPLE_RATE / 10];
 					// fprintf(stderr, "data available on stdin" "\n");
 					ssize_t lus = fread(buffer, sizeof(int32_t), sizeof(buffer) / sizeof(int32_t), stdin);
