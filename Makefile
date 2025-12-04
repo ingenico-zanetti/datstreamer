@@ -9,6 +9,7 @@ datstreamer: datstreamer.c
 	$(CC) -o datstreamer datstreamer.c
 
 install: datstreamer
+	mkdir -p ~/bin
 	strip datstreamer
 	cp -vf ./datstreamer ~/bin
 
