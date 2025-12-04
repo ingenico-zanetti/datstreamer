@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
+#include <signal.h>
 #include <linux/limits.h>
 #include <sys/time.h>
 
@@ -191,7 +192,11 @@ static void analyze_and_forward(parserContext_s *context, const uint32_t *buffer
 int startsWith(const char *start, const char *with){
 	return(start == strstr(start, with));
 }
-	
+
+static void signalHandlerFunction(int theSignal, siginfo_t *si, void *unused){
+	fprintf(stderr, "%s(%i)" "\n", __func__, theSignal);
+}
+
 int main(int argc, const char *argv[]){
 	if(argc < 2){
 		fprintf(stderr,
@@ -201,6 +206,17 @@ int main(int argc, const char *argv[]){
 				argv[0]);
 		exit(1);
 	}
+	// Avoid dying because of SIGPIPE
+	// when remote has closed the connection and we are not lucky enough to simply get an error on the write()
+	{
+		struct sigaction signalHandler;
+		signalHandler.sa_sigaction = signalHandlerFunction;
+		signalHandler.sa_flags = SA_SIGINFO;
+		sigemptyset(&signalHandler.sa_mask);
+
+		sigaction(SIGPIPE, &signalHandler, 0);
+	}
+
 	// Initialize WAVE header for an infinite 48kHz S16LE stereo stream
 	memcpy(&wave_header.chunkId,     "RIFF", 4);
 	wave_header.chunkSize = 0xFFFFFFF8;
