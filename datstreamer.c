@@ -200,14 +200,15 @@ static void signalHandlerFunction(int theSignal, siginfo_t *si, void *unused){
 int main(int argc, const char *argv[]){
 	if(argc < 2){
 		fprintf(stderr,
-				"Usage: %s <port definition> [<port definition> [ .... ]]" "\n"
+				"Usage: %s <port definition> [channel option] [<port definition> [ .... ]]" "\n"
 				"with <port definition> either a TCP port number or stdout," 
-			        "optionally followed by a ':' and an integer sample offset" "\n",
+			        "optionally followed by a ':' and an integer sample offset" "\n"
+				"and <channel option> -c1 or -c2 (default value) to specify if the source is mono or stereo" "\n",
 				argv[0]);
 		exit(1);
 	}
-	// Avoid dying because of SIGPIPE
-	// when remote has closed the connection and we are not lucky enough to simply get an error on the write()
+	// Avoid dying because of SIGPIPE when remote has closed the connection
+	// and we are not lucky enough to simply get an error on the write()
 	{
 		struct sigaction signalHandler;
 		signalHandler.sa_sigaction = signalHandlerFunction;
@@ -217,6 +218,7 @@ int main(int argc, const char *argv[]){
 		sigaction(SIGPIPE, &signalHandler, 0);
 	}
 
+	int channel = 2;
 	// Initialize WAVE header for an infinite 48kHz S16LE stereo stream
 	memcpy(&wave_header.chunkId,     "RIFF", 4);
 	wave_header.chunkSize = 0xFFFFFFF8;
@@ -232,14 +234,13 @@ int main(int argc, const char *argv[]){
 	memcpy(&wave_header.subChunkId2, "data", 4);
 	wave_header.subChunk2Size = 0xFFFFFFD4;
 
-	int in  = STDIN_FILENO;
+	// int in  = STDIN_FILENO;
 	{
 		parserContext_s context;
 		contextInitialize(&context);
-		fprintf(stderr, "sizeof(context) = %i" "\n", sizeof(context));
 		int listeningSockets[MAX_LISTENING_SOCKETS];
 		int socketOffset[MAX_LISTENING_SOCKETS];
-		int listeningSocketCount = 0;
+		// int listeningSocketCount = 0;
 		for(int i = 0 ; i < MAX_LISTENING_SOCKETS ; i++){
 			listeningSockets[i] = -1;
 			socketOffset[i] = 0;
@@ -261,6 +262,9 @@ int main(int argc, const char *argv[]){
 						context.outputs[index].waveHeaderSent = 0;
 						fprintf(stderr, "Outputting to stdout with offset %i" "\n", offset);
 					}
+				}else if(0 == strcmp("-c1", argv[i])){
+					channel = 1;
+					fprintf(stderr, "Input is MONO" "\n");
 				}else{
 					int tcpPort = atoi(argv[i]);
 					if((0 < tcpPort) && (tcpPort < 65535)){
@@ -315,11 +319,32 @@ int main(int argc, const char *argv[]){
 					}
 				}
 				if(FD_ISSET(STDIN_FILENO, &fds_in)){
-					int32_t buffer[SAMPLE_RATE / 10];
+					uint32_t buffer[SAMPLE_RATE / 10];
 					// fprintf(stderr, "data available on stdin" "\n");
-					ssize_t lus = fread(buffer, sizeof(int32_t), sizeof(buffer) / sizeof(int32_t), stdin);
+					size_t count = sizeof(buffer) / sizeof(buffer[0]);
+					ssize_t lus = 0;
+					if(1 == channel){
+						lus = fread(buffer, sizeof(uint16_t), count, stdin);
+					}else{
+						// Channel == 2 implied
+						lus = fread(buffer, sizeof(uint32_t), count, stdin);
+					}
 					if(lus <= 0){
 						break;
+					}
+					if(1 == channel){
+						// "Expand" to STEREO
+						// We want to "expand" this <count> 16-bit mono sample
+						// by cloning each mono 16bit sample to a stereo 16-bit sample
+						// We start by the end so we don't overwrite the samples in the process
+						uint16_t *dst = ((uint16_t*)buffer) + 2 * lus;
+						uint16_t *src = ((uint16_t*)buffer) + lus;
+						int i = lus;
+						while(i--){
+							uint16_t sample = *--src;
+							*--dst = sample;
+							*--dst = sample;
+						}
 					}
 					analyze_and_forward(&context, buffer, lus);
 				}
