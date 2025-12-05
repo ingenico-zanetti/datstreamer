@@ -333,9 +333,8 @@ int main(int argc, const char *argv[]){
 						break;
 					}
 					if(1 == channel){
-						// "Expand" to STEREO
-						// We want to "expand" this <count> 16-bit mono sample
-						// by cloning each mono 16bit sample to a stereo 16-bit sample
+						// We want to "expand" this <lus> 16-bit mono samples
+						// by cloning each mono 16-bit sample to a stereo 16-bit sample
 						// We start by the end so we don't overwrite the samples in the process
 						uint16_t *dst = ((uint16_t*)buffer) + 2 * lus;
 						uint16_t *src = ((uint16_t*)buffer) + lus;
