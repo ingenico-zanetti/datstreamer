@@ -118,6 +118,13 @@ struct {
     uint32_t subChunk2Size;
 } wave_header;
 
+static void perror_and_close(const char *errorString, Output_s *output, int index){
+	perror(errorString);
+	fprintf(stderr, "Closing slot %d (fd=%d)" "\n", index, output->fd);
+	close(output->fd);
+	output->fd = -1;
+}
+
 static void analyze_and_forward(parserContext_s *context, const uint32_t *buffer, ssize_t sampleCount){
 	// fprintf(stderr, "%s(sampleCount=%i)" "\n", __func__, sampleCount);
 	int i = sampleCount;
@@ -162,15 +169,11 @@ static void analyze_and_forward(parserContext_s *context, const uint32_t *buffer
 				int secondWriteLength = toSend - firstWriteLength;        // remaining sample(s) from the start of the FIFO
 				int written1 = write(output->fd, context->inputFifo + startReadIndex, firstWriteLength * sizeof(uint32_t));
 				if(written1 < 0){
-					perror("fwrite()(written1)");
-					close(output->fd);
-					output->fd = -1;
+					perror_and_close("fwrite()(written1)", output, i);
 				}else{
 					int written2 = write(output->fd, context->inputFifo, secondWriteLength * sizeof(uint32_t));
 					if(written2 < 0){
-						perror("fwrite()(written2)");
-						close(output->fd);
-						output->fd = -1;
+						perror_and_close("fwrite()(written2)", output, i);
 					}
 				}
 			}else{
@@ -178,9 +181,7 @@ static void analyze_and_forward(parserContext_s *context, const uint32_t *buffer
 				int written = write(output->fd, context->inputFifo + startReadIndex, toSend * sizeof(uint32_t));
 				// fprintf(stderr, "%s:written=%i" "\n", __func__, written / sizeof(uint32_t));
 				if(written != toSend * sizeof(uint32_t)){
-					perror("fwrite()(written)");
-					close(output->fd);
-					output->fd = -1;
+					perror_and_close("fwrite()(written)", output, i);
 				}
 			}
 		}
